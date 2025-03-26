@@ -26,6 +26,60 @@ import { Download, Copy, Save, Trash2, Plus, FileText } from "lucide-react"
 import { aiModels, infrastructureOptions, databaseOptions, calculateCosts } from "@/lib/cost-calculator"
 import type { Project } from "@/lib/types"
 
+// Función auxiliar para calcular el costo de un modelo de IA
+function calculateModelCost(modelId: string, userCount: number, apiCallsPerUserPerMonth: number): number {
+  const model = aiModels.find((m) => m.id === modelId)
+  if (!model) return 0
+  
+  // Asumimos un promedio de 1000 tokens por llamada
+  const costPerCall = model.costPer1000Tokens
+  const totalCalls = userCount * apiCallsPerUserPerMonth
+  return costPerCall * totalCalls
+}
+
+// Función auxiliar para calcular el costo de infraestructura
+function calculateInfraCost(providerId: string, tier: string, userCount: number): number {
+  const provider = infrastructureOptions.find((p) => p.id === providerId)
+  if (!provider) return 0
+  
+  const tierMultiplier = provider.tiers[tier]?.multiplier || 1
+  const baseCost = provider.baseCost * tierMultiplier
+  const scalingCost = provider.scalingFactor * userCount * tierMultiplier
+
+  return baseCost + scalingCost
+}
+
+// Función auxiliar para calcular el costo de base de datos
+function calculateDBCost(providerId: string, tier: string, userCount: number): number {
+  const provider = databaseOptions.find((p) => p.id === providerId)
+  if (!provider) return 0
+  
+  const tierMultiplier = provider.tiers[tier]?.multiplier || 1
+  const baseCost = provider.baseCost * tierMultiplier
+  const scalingCost = provider.scalingFactor * userCount * tierMultiplier
+
+  return baseCost + scalingCost
+}
+
+// Función auxiliar para obtener los tiers de un proveedor
+function getProviderTiers(providerId: string, type: 'infrastructure' | 'database'): { id: string, name: string }[] {
+  const options = type === 'infrastructure' ? infrastructureOptions : databaseOptions
+  const provider = options.find((p) => p.id === providerId)
+  
+  if (!provider) return []
+  
+  return Object.entries(provider.tiers).map(([id, tier]) => ({
+    id,
+    name: tier.name
+  }))
+}
+
+// Función auxiliar para obtener el tier por defecto
+function getDefaultTier(providerId: string, type: 'infrastructure' | 'database'): string {
+  const tiers = getProviderTiers(providerId, type)
+  return tiers.length > 0 ? tiers[0].id : ''
+}
+
 export default function CostCalculator() {
   const { toast } = useToast()
   const [project, setProject] = useState<Project>({
@@ -178,15 +232,15 @@ COTIZACIÓN DE PROYECTO TECNOLÓGICO
 
 Nombre del proyecto: ${project.name}
 Número de usuarios: ${project.userCount.toLocaleString()}
-Llamadas a API por usuario al mes: ${project.apiCallsPerUserPerMonth}
+Llamadas a API por usuario al mes: ${project.apiCallsPerUserPerMonth.toLocaleString()}
 
 COSTOS MENSUALES:
-- APIs y modelos de IA: $${costs.aiCosts.toFixed(2)}
-- Infraestructura: $${costs.infrastructureCosts.toFixed(2)}
-- Bases de datos: $${costs.databaseCosts.toFixed(2)}
+- APIs y modelos de IA: $${costs.aiCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+- Infraestructura: $${costs.infrastructureCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+- Bases de datos: $${costs.databaseCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
 
-COSTO TOTAL MENSUAL: $${costs.totalMonthlyCost.toFixed(2)}
-COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
+COSTO TOTAL MENSUAL: $${costs.totalMonthlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
     `
 
     navigator.clipboard.writeText(costBreakdown)
@@ -230,14 +284,14 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
               id="user-count"
               min={100}
               max={1000000}
-              step={100}
+              step={1000}
               value={[project.userCount]}
               onValueChange={(value) => setProject((prev) => ({ ...prev, userCount: value[0] }))}
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>100</span>
-              <span>10,000</span>
-              <span>100,000</span>
+              <span>330,000</span>
+              <span>660,000</span>
               <span>1M</span>
             </div>
           </div>
@@ -250,16 +304,17 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
             <Slider
               id="api-calls"
               min={1}
-              max={100}
-              step={1}
+              max={1000}
+              step={10}
               value={[project.apiCallsPerUserPerMonth]}
               onValueChange={(value) => setProject((prev) => ({ ...prev, apiCallsPerUserPerMonth: value[0] }))}
             />
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>1</span>
-              <span>25</span>
-              <span>50</span>
-              <span>100</span>
+              <span>250</span>
+              <span>500</span>
+              <span>750</span>
+              <span>1000</span>
             </div>
           </div>
         </CardContent>
@@ -287,7 +342,7 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
                     </Label>
                     <Select
                       value={tech.modelId}
-                      onValueChange={(value) => updateAITechnology(tech.id, value, tech.customCost)}
+                      onValueChange={(value) => updateAITechnology(tech.id, value, null)}
                     >
                       <SelectTrigger id={`ai-model-${index}`}>
                         <SelectValue placeholder="Selecciona un modelo" />
@@ -303,19 +358,12 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
                   </div>
 
                   <div className="w-[180px]">
-                    <Label htmlFor={`custom-cost-${index}`} className="mb-2 block">
-                      Costo Personalizado
+                    <Label htmlFor={`calculated-cost-${index}`} className="mb-2 block">
+                      Costo Estimado
                     </Label>
-                    <Input
-                      id={`custom-cost-${index}`}
-                      type="number"
-                      placeholder="Opcional"
-                      value={tech.customCost !== null ? tech.customCost : ""}
-                      onChange={(e) => {
-                        const value = e.target.value === "" ? null : Number.parseFloat(e.target.value)
-                        updateAITechnology(tech.id, tech.modelId, value)
-                      }}
-                    />
+                    <div id={`calculated-cost-${index}`} className="h-10 px-3 py-2 rounded-md border border-input bg-background text-sm">
+                      ${calculateModelCost(tech.modelId, project.userCount, project.apiCallsPerUserPerMonth).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    </div>
                   </div>
 
                   <Button variant="destructive" size="icon" onClick={() => removeAITechnology(tech.id)}>
@@ -346,7 +394,7 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
                     </Label>
                     <Select
                       value={infra.providerId}
-                      onValueChange={(value) => updateInfrastructure(infra.id, value, infra.tier, infra.customCost)}
+                      onValueChange={(value) => updateInfrastructure(infra.id, value, getDefaultTier(value, 'infrastructure'), null)}
                     >
                       <SelectTrigger id={`infra-provider-${index}`}>
                         <SelectValue placeholder="Selecciona un proveedor" />
@@ -368,34 +416,29 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
                     <Select
                       value={infra.tier}
                       onValueChange={(value) =>
-                        updateInfrastructure(infra.id, infra.providerId, value, infra.customCost)
+                        updateInfrastructure(infra.id, infra.providerId, value, null)
                       }
                     >
                       <SelectTrigger id={`infra-tier-${index}`}>
                         <SelectValue placeholder="Nivel" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="basic">Básico</SelectItem>
-                        <SelectItem value="pro">Profesional</SelectItem>
-                        <SelectItem value="enterprise">Empresarial</SelectItem>
+                        {getProviderTiers(infra.providerId, 'infrastructure').map((tier) => (
+                          <SelectItem key={tier.id} value={tier.id}>
+                            {tier.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="w-[180px]">
-                    <Label htmlFor={`infra-custom-cost-${index}`} className="mb-2 block">
-                      Costo Personalizado
+                    <Label htmlFor={`calculated-infra-cost-${index}`} className="mb-2 block">
+                      Costo Estimado
                     </Label>
-                    <Input
-                      id={`infra-custom-cost-${index}`}
-                      type="number"
-                      placeholder="Opcional"
-                      value={infra.customCost !== null ? infra.customCost : ""}
-                      onChange={(e) => {
-                        const value = e.target.value === "" ? null : Number.parseFloat(e.target.value)
-                        updateInfrastructure(infra.id, infra.providerId, infra.tier, value)
-                      }}
-                    />
+                    <div id={`calculated-infra-cost-${index}`} className="h-10 px-3 py-2 rounded-md border border-input bg-background text-sm">
+                      ${calculateInfraCost(infra.providerId, infra.tier, project.userCount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    </div>
                   </div>
 
                   <Button variant="destructive" size="icon" onClick={() => removeInfrastructure(infra.id)}>
@@ -426,7 +469,7 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
                     </Label>
                     <Select
                       value={db.providerId}
-                      onValueChange={(value) => updateDatabase(db.id, value, db.tier, db.customCost)}
+                      onValueChange={(value) => updateDatabase(db.id, value, getDefaultTier(value, 'database'), null)}
                     >
                       <SelectTrigger id={`db-provider-${index}`}>
                         <SelectValue placeholder="Selecciona un proveedor" />
@@ -447,33 +490,28 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
                     </Label>
                     <Select
                       value={db.tier}
-                      onValueChange={(value) => updateDatabase(db.id, db.providerId, value, db.customCost)}
+                      onValueChange={(value) => updateDatabase(db.id, db.providerId, value, null)}
                     >
                       <SelectTrigger id={`db-tier-${index}`}>
                         <SelectValue placeholder="Nivel" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="basic">Básico</SelectItem>
-                        <SelectItem value="pro">Profesional</SelectItem>
-                        <SelectItem value="enterprise">Empresarial</SelectItem>
+                        {getProviderTiers(db.providerId, 'database').map((tier) => (
+                          <SelectItem key={tier.id} value={tier.id}>
+                            {tier.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="w-[180px]">
-                    <Label htmlFor={`db-custom-cost-${index}`} className="mb-2 block">
-                      Costo Personalizado
+                    <Label htmlFor={`calculated-db-cost-${index}`} className="mb-2 block">
+                      Costo Estimado
                     </Label>
-                    <Input
-                      id={`db-custom-cost-${index}`}
-                      type="number"
-                      placeholder="Opcional"
-                      value={db.customCost !== null ? db.customCost : ""}
-                      onChange={(e) => {
-                        const value = e.target.value === "" ? null : Number.parseFloat(e.target.value)
-                        updateDatabase(db.id, db.providerId, db.tier, value)
-                      }}
-                    />
+                    <div id={`calculated-db-cost-${index}`} className="h-10 px-3 py-2 rounded-md border border-input bg-background text-sm">
+                      ${calculateDBCost(db.providerId, db.tier, project.userCount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    </div>
                   </div>
 
                   <Button variant="destructive" size="icon" onClick={() => removeDatabase(db.id)}>
@@ -507,25 +545,25 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toFixed(2)}
             <TableBody>
               <TableRow>
                 <TableCell>APIs y Modelos de IA</TableCell>
-                <TableCell className="text-right">${costs.aiCosts.toFixed(2)}</TableCell>
-                <TableCell className="text-right">${(costs.aiCosts * 12).toFixed(2)}</TableCell>
+                <TableCell className="text-right">${costs.aiCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
+                <TableCell className="text-right">${(costs.aiCosts * 12).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
               </TableRow>
               <TableRow>
                 <TableCell>Infraestructura</TableCell>
-                <TableCell className="text-right">${costs.infrastructureCosts.toFixed(2)}</TableCell>
-                <TableCell className="text-right">${(costs.infrastructureCosts * 12).toFixed(2)}</TableCell>
+                <TableCell className="text-right">${costs.infrastructureCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
+                <TableCell className="text-right">${(costs.infrastructureCosts * 12).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
               </TableRow>
               <TableRow>
                 <TableCell>Bases de Datos</TableCell>
-                <TableCell className="text-right">${costs.databaseCosts.toFixed(2)}</TableCell>
-                <TableCell className="text-right">${(costs.databaseCosts * 12).toFixed(2)}</TableCell>
+                <TableCell className="text-right">${costs.databaseCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
+                <TableCell className="text-right">${(costs.databaseCosts * 12).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
               </TableRow>
             </TableBody>
             <TableFooter>
               <TableRow>
                 <TableCell>Total</TableCell>
-                <TableCell className="text-right">${costs.totalMonthlyCost.toFixed(2)}</TableCell>
-                <TableCell className="text-right">${costs.totalYearlyCost.toFixed(2)}</TableCell>
+                <TableCell className="text-right">${costs.totalMonthlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
+                <TableCell className="text-right">${costs.totalYearlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
               </TableRow>
             </TableFooter>
           </Table>
