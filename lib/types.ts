@@ -58,6 +58,7 @@ export interface Project {
   infrastructure: InfrastructureSelection[]
   databases: DatabaseSelection[]
   apiCallsPerUserPerMonth: number
+  subscriptionPricePerUser: number
 }
 
 export interface CostBreakdown {

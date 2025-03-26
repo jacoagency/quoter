@@ -25,6 +25,14 @@ import { useToast } from "@/components/ui/use-toast"
 import { Download, Copy, Save, Trash2, Plus, FileText } from "lucide-react"
 import { aiModels, infrastructureOptions, databaseOptions, calculateCosts } from "@/lib/cost-calculator"
 import type { Project } from "@/lib/types"
+import { 
+  getBestAIModel, 
+  getBestInfrastructure, 
+  getBestDatabase, 
+  getProviderName, 
+  getTierName 
+} from "@/lib/recommendations"
+import { RecommendationCard } from "@/components/recommendation-card"
 
 // Función auxiliar para calcular el costo de un modelo de IA
 function calculateModelCost(modelId: string, userCount: number, apiCallsPerUserPerMonth: number): number {
@@ -80,6 +88,11 @@ function getDefaultTier(providerId: string, type: 'infrastructure' | 'database')
   return tiers.length > 0 ? tiers[0].id : ''
 }
 
+// Función para formatear números con comas
+function formatNumber(num: number): string {
+  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 export default function CostCalculator() {
   const { toast } = useToast()
   const [project, setProject] = useState<Project>({
@@ -89,11 +102,28 @@ export default function CostCalculator() {
     infrastructure: [],
     databases: [],
     apiCallsPerUserPerMonth: 10,
+    subscriptionPricePerUser: 9.99,
   })
 
   const [presets, setPresets] = useState<Project[]>([])
   const [presetName, setPresetName] = useState("")
   const [showSaveDialog, setShowSaveDialog] = useState(false)
+
+  // Estado para las recomendaciones
+  const [recommendations, setRecommendations] = useState({
+    ai: getBestAIModel(1000, 10),
+    infrastructure: getBestInfrastructure(1000),
+    database: getBestDatabase(1000)
+  });
+
+  // Actualizar recomendaciones cuando cambian los parámetros
+  useEffect(() => {
+    setRecommendations({
+      ai: getBestAIModel(project.userCount, project.apiCallsPerUserPerMonth),
+      infrastructure: getBestInfrastructure(project.userCount),
+      database: getBestDatabase(project.userCount)
+    });
+  }, [project.userCount, project.apiCallsPerUserPerMonth]);
 
   // Load presets from localStorage on component mount
   useEffect(() => {
@@ -227,20 +257,28 @@ export default function CostCalculator() {
   }
 
   const copyToClipboard = () => {
+    const revenue = calculateRevenue();
     const costBreakdown = `
 COTIZACIÓN DE PROYECTO TECNOLÓGICO
 
 Nombre del proyecto: ${project.name}
 Número de usuarios: ${project.userCount.toLocaleString()}
-Llamadas a API por usuario al mes: ${project.apiCallsPerUserPerMonth.toLocaleString()}
+Precio de suscripción por usuario: $${project.subscriptionPricePerUser.toFixed(2)}
+Llamadas a API por usuario al mes: ${project.apiCallsPerUserPerMonth}
 
 COSTOS MENSUALES:
-- APIs y modelos de IA: $${costs.aiCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-- Infraestructura: $${costs.infrastructureCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-- Bases de datos: $${costs.databaseCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+- APIs y modelos de IA: $${formatNumber(costs.aiCosts)}
+- Infraestructura: $${formatNumber(costs.infrastructureCosts)}
+- Bases de datos: $${formatNumber(costs.databaseCosts)}
 
-COSTO TOTAL MENSUAL: $${costs.totalMonthlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+TOTAL COSTOS MENSUALES: $${formatNumber(costs.totalMonthlyCost)}
+TOTAL COSTOS ANUALES: $${formatNumber(costs.totalYearlyCost)}
+
+INGRESOS Y UTILIDAD:
+- Ingresos mensuales: $${formatNumber(revenue.monthlyRevenue)}
+- Ingresos anuales: $${formatNumber(revenue.yearlyRevenue)}
+- Utilidad mensual: $${formatNumber(revenue.monthlyProfit)} (${revenue.profitMargin.toFixed(1)}%)
+- Utilidad anual: $${formatNumber(revenue.yearlyProfit)}
     `
 
     navigator.clipboard.writeText(costBreakdown)
@@ -258,6 +296,123 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
     })
   }
 
+  // Función para aplicar una recomendación de IA
+  const applyAIRecommendation = () => {
+    if (project.aiTechnologies.length === 0) {
+      // Si no hay tecnologías, añade la recomendada
+      setProject(prev => ({
+        ...prev,
+        aiTechnologies: [
+          { id: Date.now().toString(), modelId: recommendations.ai.id, customCost: null }
+        ]
+      }));
+    } else {
+      // Si ya hay tecnologías, actualiza la primera
+      setProject(prev => ({
+        ...prev,
+        aiTechnologies: prev.aiTechnologies.map((tech, index) => 
+          index === 0 ? { ...tech, modelId: recommendations.ai.id, customCost: null } : tech
+        )
+      }));
+    }
+    
+    toast({
+      title: "Recomendación aplicada",
+      description: `Se ha aplicado el modelo ${recommendations.ai.name}`,
+    });
+  };
+
+  // Función para aplicar una recomendación de infraestructura
+  const applyInfraRecommendation = () => {
+    if (project.infrastructure.length === 0) {
+      // Si no hay infraestructura, añade la recomendada
+      setProject(prev => ({
+        ...prev,
+        infrastructure: [
+          { 
+            id: Date.now().toString(), 
+            providerId: recommendations.infrastructure.providerId, 
+            tier: recommendations.infrastructure.tier, 
+            customCost: null 
+          }
+        ]
+      }));
+    } else {
+      // Si ya hay infraestructura, actualiza la primera
+      setProject(prev => ({
+        ...prev,
+        infrastructure: prev.infrastructure.map((infra, index) => 
+          index === 0 ? { 
+            ...infra, 
+            providerId: recommendations.infrastructure.providerId, 
+            tier: recommendations.infrastructure.tier, 
+            customCost: null 
+          } : infra
+        )
+      }));
+    }
+    
+    toast({
+      title: "Recomendación aplicada",
+      description: `Se ha aplicado ${getProviderName(recommendations.infrastructure.providerId, 'infrastructure')} (${getTierName(recommendations.infrastructure.providerId, recommendations.infrastructure.tier, 'infrastructure')})`,
+    });
+  };
+
+  // Función para aplicar una recomendación de base de datos
+  const applyDBRecommendation = () => {
+    if (project.databases.length === 0) {
+      // Si no hay bases de datos, añade la recomendada
+      setProject(prev => ({
+        ...prev,
+        databases: [
+          { 
+            id: Date.now().toString(), 
+            providerId: recommendations.database.providerId, 
+            tier: recommendations.database.tier, 
+            customCost: null 
+          }
+        ]
+      }));
+    } else {
+      // Si ya hay bases de datos, actualiza la primera
+      setProject(prev => ({
+        ...prev,
+        databases: prev.databases.map((db, index) => 
+          index === 0 ? { 
+            ...db, 
+            providerId: recommendations.database.providerId, 
+            tier: recommendations.database.tier, 
+            customCost: null 
+          } : db
+        )
+      }));
+    }
+    
+    toast({
+      title: "Recomendación aplicada",
+      description: `Se ha aplicado ${getProviderName(recommendations.database.providerId, 'database')} (${getTierName(recommendations.database.providerId, recommendations.database.tier, 'database')})`,
+    });
+  };
+
+  // Calcular ingresos y utilidad
+  const calculateRevenue = () => {
+    const monthlyRevenue = project.userCount * project.subscriptionPricePerUser;
+    const yearlyRevenue = monthlyRevenue * 12;
+    const monthlyProfit = monthlyRevenue - costs.totalMonthlyCost;
+    const yearlyProfit = yearlyRevenue - costs.totalYearlyCost;
+    const profitMargin = (monthlyProfit / monthlyRevenue) * 100;
+
+    return {
+      monthlyRevenue,
+      yearlyRevenue,
+      monthlyProfit,
+      yearlyProfit,
+      profitMargin
+    };
+  };
+
+  const revenue = calculateRevenue();
+
   return (
     <div className="space-y-8">
       <Card>
@@ -273,6 +428,36 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
               value={project.name}
               onChange={(e) => setProject((prev) => ({ ...prev, name: e.target.value }))}
             />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="subscription-price">Precio de Suscripción por Usuario (USD)</Label>
+              <div className="relative w-32">
+                <div className="flex">
+                  <div className="flex items-center justify-center h-10 w-8 rounded-l-md border border-r-0 border-input bg-muted">
+                    <span className="text-muted-foreground">$</span>
+                  </div>
+                  <Input
+                    id="subscription-price"
+                    type="number"
+                    step={0.01}
+                    value={project.subscriptionPricePerUser === 0 ? "" : project.subscriptionPricePerUser}
+                    onChange={(e) => {
+                      if (e.target.value === "") {
+                        setProject((prev) => ({ ...prev, subscriptionPricePerUser: 0 }));
+                      } else {
+                        const value = parseFloat(e.target.value);
+                        if (!isNaN(value) && value >= 0) {
+                          setProject((prev) => ({ ...prev, subscriptionPricePerUser: value }));
+                        }
+                      }
+                    }}
+                    className="rounded-l-none"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -328,6 +513,14 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
         </TabsList>
 
         <TabsContent value="ai" className="space-y-4">
+          <RecommendationCard
+            title="Recomendación"
+            subtitle={`Para tus parámetros actuales, te recomendamos: ${recommendations.ai.name}`}
+            reason={recommendations.ai.reason}
+            colorScheme="green"
+            onClick={applyAIRecommendation}
+          />
+          
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>APIs y Modelos de IA</CardTitle>
@@ -362,7 +555,7 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
                       Costo Estimado
                     </Label>
                     <div id={`calculated-cost-${index}`} className="h-10 px-3 py-2 rounded-md border border-input bg-background text-sm">
-                      ${calculateModelCost(tech.modelId, project.userCount, project.apiCallsPerUserPerMonth).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                      ${formatNumber(calculateModelCost(tech.modelId, project.userCount, project.apiCallsPerUserPerMonth))}
                     </div>
                   </div>
 
@@ -380,6 +573,14 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
         </TabsContent>
 
         <TabsContent value="infrastructure" className="space-y-4">
+          <RecommendationCard
+            title="Recomendación"
+            subtitle={`Para ${project.userCount.toLocaleString()} usuarios, recomendamos: ${getProviderName(recommendations.infrastructure.providerId, 'infrastructure')} (${getTierName(recommendations.infrastructure.providerId, recommendations.infrastructure.tier, 'infrastructure')})`}
+            reason={recommendations.infrastructure.reason}
+            colorScheme="blue"
+            onClick={applyInfraRecommendation}
+          />
+          
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>Infraestructura</CardTitle>
@@ -437,7 +638,7 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
                       Costo Estimado
                     </Label>
                     <div id={`calculated-infra-cost-${index}`} className="h-10 px-3 py-2 rounded-md border border-input bg-background text-sm">
-                      ${calculateInfraCost(infra.providerId, infra.tier, project.userCount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                      ${formatNumber(calculateInfraCost(infra.providerId, infra.tier, project.userCount))}
                     </div>
                   </div>
 
@@ -455,6 +656,14 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
         </TabsContent>
 
         <TabsContent value="database" className="space-y-4">
+          <RecommendationCard
+            title="Recomendación"
+            subtitle={`Para ${project.userCount.toLocaleString()} usuarios, recomendamos: ${getProviderName(recommendations.database.providerId, 'database')} (${getTierName(recommendations.database.providerId, recommendations.database.tier, 'database')})`}
+            reason={recommendations.database.reason}
+            colorScheme="purple"
+            onClick={applyDBRecommendation}
+          />
+          
           <Card>
             <CardHeader className="pb-3">
               <CardTitle>Bases de Datos</CardTitle>
@@ -510,7 +719,7 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
                       Costo Estimado
                     </Label>
                     <div id={`calculated-db-cost-${index}`} className="h-10 px-3 py-2 rounded-md border border-input bg-background text-sm">
-                      ${calculateDBCost(db.providerId, db.tier, project.userCount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                      ${formatNumber(calculateDBCost(db.providerId, db.tier, project.userCount))}
                     </div>
                   </div>
 
@@ -530,43 +739,99 @@ COSTO TOTAL ANUAL: $${costs.totalYearlyCost.toLocaleString('en-US', {minimumFrac
 
       <Card>
         <CardHeader>
-          <CardTitle>Resumen de Costos</CardTitle>
-          <CardDescription>Desglose de costos estimados para tu proyecto</CardDescription>
+          <CardTitle>Resumen de Costos e Ingresos</CardTitle>
+          <CardDescription>Desglose financiero estimado para tu proyecto</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Categoría</TableHead>
-                <TableHead className="text-right">Costo Mensual</TableHead>
-                <TableHead className="text-right">Costo Anual</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow>
-                <TableCell>APIs y Modelos de IA</TableCell>
-                <TableCell className="text-right">${costs.aiCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-                <TableCell className="text-right">${(costs.aiCosts * 12).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Infraestructura</TableCell>
-                <TableCell className="text-right">${costs.infrastructureCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-                <TableCell className="text-right">${(costs.infrastructureCosts * 12).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Bases de Datos</TableCell>
-                <TableCell className="text-right">${costs.databaseCosts.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-                <TableCell className="text-right">${(costs.databaseCosts * 12).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-              </TableRow>
-            </TableBody>
-            <TableFooter>
-              <TableRow>
-                <TableCell>Total</TableCell>
-                <TableCell className="text-right">${costs.totalMonthlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-                <TableCell className="text-right">${costs.totalYearlyCost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</TableCell>
-              </TableRow>
-            </TableFooter>
-          </Table>
+          <div className="grid md:grid-cols-2 gap-6 mb-6">
+            <Card className="border-red-100">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Costos</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Categoría</TableHead>
+                      <TableHead className="text-right">Mensual</TableHead>
+                      <TableHead className="text-right">Anual</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>APIs y Modelos de IA</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.aiCosts)}</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.aiCosts * 12)}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Infraestructura</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.infrastructureCosts)}</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.infrastructureCosts * 12)}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Bases de Datos</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.databaseCosts)}</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.databaseCosts * 12)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell>Total de Costos</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.totalMonthlyCost)}</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.totalYearlyCost)}</TableCell>
+                    </TableRow>
+                  </TableFooter>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <Card className="border-green-100">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Ingresos y Utilidad</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Métrica</TableHead>
+                      <TableHead className="text-right">Mensual</TableHead>
+                      <TableHead className="text-right">Anual</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>Ingresos por Suscripciones</TableCell>
+                      <TableCell className="text-right">${formatNumber(revenue.monthlyRevenue)}</TableCell>
+                      <TableCell className="text-right">${formatNumber(revenue.yearlyRevenue)}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Costos Totales</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.totalMonthlyCost)}</TableCell>
+                      <TableCell className="text-right">${formatNumber(costs.totalYearlyCost)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell>
+                        Utilidad Neta 
+                        <span className={`ml-2 inline-block px-2 py-0.5 text-xs rounded-full ${revenue.monthlyProfit >= 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                          {revenue.profitMargin >= 0 ? `+${revenue.profitMargin.toFixed(1)}%` : `${revenue.profitMargin.toFixed(1)}%`}
+                        </span>
+                      </TableCell>
+                      <TableCell className={`text-right ${revenue.monthlyProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        ${formatNumber(Math.abs(revenue.monthlyProfit))}
+                        {revenue.monthlyProfit < 0 && <span className="ml-1">(Pérdida)</span>}
+                      </TableCell>
+                      <TableCell className={`text-right ${revenue.yearlyProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        ${formatNumber(Math.abs(revenue.yearlyProfit))}
+                        {revenue.yearlyProfit < 0 && <span className="ml-1">(Pérdida)</span>}
+                      </TableCell>
+                    </TableRow>
+                  </TableFooter>
+                </Table>
+              </CardContent>
+            </Card>
+          </div>
         </CardContent>
         <CardFooter className="flex justify-between">
           <div className="flex space-x-2">
